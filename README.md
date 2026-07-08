@@ -17,6 +17,6 @@ A unified framework for custom Community Center bundle packs in Stardew Valley.
 3. Run `dotnet build`
 
 ## License
-GPL v3 — see LICENSE.txt.
+GPL v3 — see LICENSE file.
 Based on [Challenging Community Center Bundles](https://github.com/Jaksha6472/ChallengingCommunityCenterBundles) by Jaksha6472.
 Bundle data derived from [Complete Completionist's Community Center](https://www.nexusmods.com/stardewvalley/mods/26998) by Nahlbrii.
