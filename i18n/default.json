@@ -1,0 +1,11 @@
+{
+    "config.section.title": "Community Center Bundles",
+
+    "config.bundle-variant.name": "Bundle Pack",
+    "config.bundle-variant.tooltip": "Choose which bundle pack to use. 'Default' leaves all bundles untouched — if another mod (like SVE) modifies bundles, those changes will still apply. Any other option replaces bundles with the chosen pack. Changes take effect at the start of the next in-game day.",
+    "config.bundle-variant.default": "Default (No Changes)",
+
+    "config.completionist.name": "Completionist Mode",
+    "config.completionist.tooltip": "When enabled, every possible Community Center bundle is active — including all Remixed variants. Equivalent to CCCC. Recommended only on a new save, as it adds new bundle slots to existing rooms.",
+    "config.completionist.required-tooltip": "This bundle pack requires Completionist Mode. It cannot be disabled while this pack is selected."
+}

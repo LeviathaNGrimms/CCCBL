@@ -1,0 +1,16 @@
+{
+    "Name": "LeviathaN's Custom Community Center Bundles Loader",
+    "Author": "LeviathaN",
+    "Version": "1.0.0",
+    "Description": "Unified replacement for CCCC and CCCB. Adds Completionist Mode and full GMCM support. Custom bundle packs can be loaded as content packs.",
+    "UniqueID": "LeviathaN.CCCBL",
+    "EntryDll": "CCCBL.dll",
+    "MinimumApiVersion": "3.18.0",
+    "Dependencies": [
+        {
+            "UniqueID": "spacechase0.GenericModConfigMenu",
+            "IsRequired": false
+        }
+    ],
+    "UpdateKeys": []
+}
