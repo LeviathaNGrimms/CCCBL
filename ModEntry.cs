@@ -14,7 +14,7 @@ namespace CCCBL
     {
         // ─── Constants ──────────────────────────────────────────────────────────
 
-        /// <summary>Sentinel value meaning "use vanilla / no custom pack".</summary>
+        /// Sentinel value meaning "use vanilla / no custom pack".
         private const string DefaultVariantKey = "Default";
 
         // No bundle-sprite constants needed — each pack's icons are loaded at a
@@ -24,18 +24,18 @@ namespace CCCBL
 
         private ModConfig Config = null!;
 
-        /// <summary>All loaded content packs: UniqueID → (data, pack reference).</summary>
+        /// All loaded content packs: UniqueID → (data, pack reference).
         private readonly Dictionary<string, (ContentPackData Data, IContentPack Pack)> LoadedPacks = new();
 
-        /// <summary>Built-in Completionist bundle data (replaces CCCC when Default + Completionist).</summary>
+        /// Built-in Completionist bundle data (replaces CCCC when Default + Completionist).
         private Dictionary<string, string>? CompletionistBundles;
 
-        /// <summary>Allowed values for the GMCM dropdown — "Default" plus every loaded pack UniqueID.</summary>
+        /// Allowed values for the GMCM dropdown — "Default" plus every loaded pack UniqueID.
         private string[] GmcmAllowedValues = Array.Empty<string>();
 
 
 
-        /// <summary>Snapshot of the full BundleData before we modify it each day, used for reversion.</summary>
+        /// Snapshot of the full BundleData before we modify it each day, used for reversion.
         private Dictionary<string, string> OriginalBundleData = new();
 
         private bool BundlesApplied = false;
@@ -142,7 +142,7 @@ namespace CCCBL
 
         // ─── Logic Helpers ────────────────────────────────────────────────────────
 
-        /// <summary>Whether the currently selected pack forces Completionist Mode on.</summary>
+        /// Whether the currently selected pack forces Completionist Mode on.
         private bool ActivePackRequiresCompletionist()
         {
             if (this.Config.BundleVariant == DefaultVariantKey) return false;
@@ -150,11 +150,10 @@ namespace CCCBL
                    && entry.Data.RequireCompletionistMode;
         }
 
-        /// <summary>Whether Completionist Mode is effectively active (user toggle OR pack forces it).</summary>
+        /// Whether Completionist Mode is effectively active (user toggle OR pack forces it).
         private bool IsCompletionistActive()
             => this.Config.CompletionistMode || this.ActivePackRequiresCompletionist();
 
-        /// <summary>
         /// Returns an ordered list of bundle data layers to apply, from lowest to highest priority.
         /// An empty list means nothing should change (vanilla mode).
         ///
@@ -165,7 +164,6 @@ namespace CCCBL
         /// Applying in layers is critical for packs with RequireCompletionistMode = true:
         /// they use bundle-name keys like "Garden" or "Rare Crops" that only exist after
         /// the Completionist base data has first created those slots.
-        /// </summary>
         private List<Dictionary<string, string>> GetActiveBundleDataLayers()
         {
             var layers = new List<Dictionary<string, string>>();
@@ -184,11 +182,9 @@ namespace CCCBL
             return layers;
         }
 
-        /// <summary>
         /// Applies bundle data entries from <paramref name="source"/> onto <paramref name="target"/>.
         /// Supports both Room/ID keys (direct set) and bundle-name keys (matched by name field).
         /// New Room/ID entries not present in target are added (required for Completionist extra slots).
-        /// </summary>
         private void ApplyBundleDataTo(IDictionary<string, string> target, Dictionary<string, string> source)
         {
             foreach (var (key, value) in source)
@@ -224,13 +220,11 @@ namespace CCCBL
             }
         }
 
-        /// <summary>
         /// Ensures the sprite reference in field 5 of a bundle data string is in a format
         /// the game can actually parse. Strips references using unrecognized formats
         /// (e.g. "Mods\SomeMod\bundlesprite:0" from packs designed for other loaders)
         /// so the game doesn't crash trying to load them as content paths.
         /// Valid formats: empty, a plain integer, or "LooseSprites\BundleSprites:N".
-        /// </summary>
         private string SanitizeBundleDataSprite(string bundleData)
         {
             string[] parts = bundleData.Split('/');
@@ -255,12 +249,10 @@ namespace CCCBL
             return bundleData;
         }
 
-        /// <summary>
         /// If the bundle data string has no sprite reference in field 5, injects a reference
         /// to CCCBL's bundleicon_default sprite so all custom bundles have a visible icon
         /// even when the pack author hasn't specified one.
         /// Bundles that already have a valid sprite reference are left unchanged.
-        /// </summary>
         private string InjectDefaultSpriteIfNeeded(string bundleData)
         {
             string[] parts       = bundleData.Split('/');
@@ -323,7 +315,7 @@ namespace CCCBL
             );
 
             // ── Completionist Mode toggle ─────────────────────────────────────────
-            // GMCM does not support disabled/locked controls, so we keep a single
+            // GMCM does not support disabled/locked controls, so I kept a single
             // static toggle. When the active pack requires Completionist Mode:
             //   - getValue always returns true so it appears checked.
             //   - setValue ignores changes so it can't be turned off.
@@ -348,7 +340,7 @@ namespace CCCBL
             );
         }
 
-        /// <summary>Called whenever a config value changes — invalidates relevant cached assets.</summary>
+        /// Called whenever a config value changes — invalidates relevant cached assets.
         private void OnConfigChanged()
         {
             this.BundlesApplied = false;
@@ -526,10 +518,8 @@ namespace CCCBL
 
         // ─── Sprite Utilities ─────────────────────────────────────────────────────
 
-        /// <summary>
         /// Returns the relative path to note_override.png inside the active content pack,
         /// or null if the active pack doesn't provide one.
-        /// </summary>
         private string? GetPackNoteOverridePath()
         {
             if (this.Config.BundleVariant == DefaultVariantKey) return null;
@@ -541,11 +531,9 @@ namespace CCCBL
 
 
 
-        /// <summary>
         /// Returns true if a file at the given path exists inside this mod's own folder.
         /// Uses HasFile-equivalent logic via IContentPack not available for the host mod,
         /// so we fall back to a direct disk check (safe — we are only checking our own directory).
-        /// </summary>
         private bool HasModAsset(string relativePath)
         {
             string fullPath = Path.Combine(
