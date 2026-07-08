@@ -2,7 +2,7 @@
 
 A unified framework for custom Community Center bundle packs in Stardew Valley.
 
-**Download on [Nexus Mods](#)** (link here once published)
+**Download on [Nexus Mods](https://www.nexusmods.com/stardewvalley/mods/48367)**
 
 ## Building from source
 1. Install the .NET 6 SDK
