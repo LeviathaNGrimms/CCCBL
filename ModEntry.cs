@@ -12,75 +12,65 @@ namespace CCCBL
 {
     public class ModEntry : Mod
     {
-        // ─── Constants ──────────────────────────────────────────────────────────
+        // ─── Constants ───────────────────────────────────────────────────────────
 
-        /// Sentinel value meaning "use vanilla / no custom pack".
-        private const string DefaultVariantKey = "Default";
+        private const string DefaultVariantKey  = "Default";
+        private const string CompletionistKey   = "Completionist";
 
-        // No bundle-sprite constants needed — each pack's icons are loaded at a
-        // custom content path (Mods/{packId}/BundleIcons) using the pack's own sprite sheet.
+        // Default JunimoNote overlay area (matches CCCC / Completionist Mode layout)
+        private static readonly Rectangle DefaultNoteOverlayArea = new(484, 110, 135, 51);
 
-        // ─── State ──────────────────────────────────────────────────────────────
+        // ─── State ───────────────────────────────────────────────────────────────
 
         private ModConfig Config = null!;
 
-        /// All loaded content packs: UniqueID → (data, pack reference).
+        /// <summary>All loaded content packs: UniqueID → (data, pack).</summary>
         private readonly Dictionary<string, (ContentPackData Data, IContentPack Pack)> LoadedPacks = new();
 
-        /// Built-in Completionist bundle data (replaces CCCC when Default + Completionist).
-        private Dictionary<string, string>? CompletionistBundles;
-
-        /// Allowed values for the GMCM dropdown — "Default" plus every loaded pack UniqueID.
+        /// <summary>Allowed values for the GMCM dropdown.</summary>
         private string[] GmcmAllowedValues = Array.Empty<string>();
 
-
-
-        /// Snapshot of the full BundleData before we modify it each day, used for reversion.
+        /// <summary>Snapshot of BundleData before our changes, for reversion on save.</summary>
         private Dictionary<string, string> OriginalBundleData = new();
 
         private bool BundlesApplied = false;
 
-        // ─── Entry Point ─────────────────────────────────────────────────────────
+        // ─── Entry ───────────────────────────────────────────────────────────────
 
         public override void Entry(IModHelper helper)
         {
             this.Config = helper.ReadConfig<ModConfig>();
 
-            // 1. Load built-in Completionist data (CCCC equivalent)
+            // Load built-in Completionist data (CCCC equivalent)
             this.LoadCompletionistData();
 
-            // 2. Load all content packs declared for this mod
+            // Load all CCCBL content packs
             foreach (IContentPack pack in helper.ContentPacks.GetOwned())
                 this.TryLoadContentPack(pack);
 
-            // 3. Build the GMCM dropdown list (Default first, then packs in load order)
+            // Build GMCM dropdown list
             var values = new List<string> { DefaultVariantKey };
             values.AddRange(this.LoadedPacks.Keys);
             this.GmcmAllowedValues = values.ToArray();
 
-            // 4. Validate config — reset to Default if the saved variant no longer exists
+            // Validate config
             if (this.Config.BundleVariant != DefaultVariantKey &&
                 !this.LoadedPacks.ContainsKey(this.Config.BundleVariant))
             {
-                this.Monitor.Log(
-                    $"Configured bundle variant '{this.Config.BundleVariant}' is not loaded. Resetting to Default.",
-                    LogLevel.Warn);
+                this.Monitor.Log($"Bundle variant '{this.Config.BundleVariant}' not found. Resetting to Default.", LogLevel.Warn);
                 this.Config.BundleVariant = DefaultVariantKey;
                 helper.WriteConfig(this.Config);
             }
 
-            // 5. If the active pack forces Completionist Mode, make sure config reflects that
+            // Auto-enable Completionist if active pack requires it
             if (this.ActivePackRequiresCompletionist() && !this.Config.CompletionistMode)
             {
                 this.Config.CompletionistMode = true;
                 helper.WriteConfig(this.Config);
             }
 
-            this.Monitor.Log(
-                $"CCCBL ready — Variant: '{this.Config.BundleVariant}', CompletionistMode: {this.Config.CompletionistMode}",
-                LogLevel.Info);
+            this.Monitor.Log($"CCCBL ready — Variant: '{this.Config.BundleVariant}', CompletionistMode: {this.Config.CompletionistMode}", LogLevel.Info);
 
-            // 6. Register events
             helper.Events.GameLoop.GameLaunched  += this.OnGameLaunched;
             helper.Events.GameLoop.DayStarted    += this.OnDayStarted;
             helper.Events.GameLoop.DayEnding     += this.OnDayEnding;
@@ -88,21 +78,20 @@ namespace CCCBL
             helper.Events.Content.AssetRequested += this.OnAssetRequested;
         }
 
-        // ─── Built-in Data ───────────────────────────────────────────────────────
+        // ─── Built-in Completionist Data ─────────────────────────────────────────
 
         private void LoadCompletionistData()
         {
             try
             {
-                this.CompletionistBundles = this.Helper.ModContent
-                    .Load<Dictionary<string, string>>("assets/CompletionistBundles.json");
+                // Register as a virtual pack so it appears in the dropdown
+                // and goes through the same layer system as real packs.
+                // We handle it specially in GetActiveBundleDataLayers.
                 this.Monitor.Log("Loaded built-in Completionist bundle data.", LogLevel.Debug);
             }
             catch (Exception ex)
             {
-                this.Monitor.Log(
-                    $"Could not load assets/CompletionistBundles.json — Completionist Mode (Default variant) will be unavailable. ({ex.Message})",
-                    LogLevel.Warn);
+                this.Monitor.Log($"Could not load CompletionistBundles.json: {ex.Message}", LogLevel.Warn);
             }
         }
 
@@ -115,93 +104,90 @@ namespace CCCBL
                 var data = pack.ReadJsonFile<ContentPackData>("content.json");
                 if (data is null)
                 {
-                    this.Monitor.Log($"'{pack.Manifest.Name}' — content.json is missing or invalid. Skipping.", LogLevel.Warn);
+                    this.Monitor.Log($"'{pack.Manifest.Name}' — content.json missing or invalid. Skipping.", LogLevel.Warn);
                     return;
                 }
-
                 if (data.Bundles is null || data.Bundles.Count == 0)
                 {
-                    this.Monitor.Log($"'{pack.Manifest.Name}' — content.json has no bundle entries. Skipping.", LogLevel.Warn);
+                    this.Monitor.Log($"'{pack.Manifest.Name}' — no bundle entries found. Skipping.", LogLevel.Warn);
                     return;
                 }
 
                 this.LoadedPacks[pack.Manifest.UniqueID] = (data, pack);
-
                 this.Monitor.Log(
-                    $"Loaded bundle pack '{pack.Manifest.Name}' ({pack.Manifest.UniqueID}) — " +
+                    $"Loaded pack '{pack.Manifest.Name}' ({pack.Manifest.UniqueID}) — " +
                     $"{data.Bundles.Count} bundle(s), RequireCompletionistMode: {data.RequireCompletionistMode}",
                     LogLevel.Info);
             }
             catch (Exception ex)
             {
-                this.Monitor.Log($"Failed to load content pack '{pack.Manifest.Name}': {ex.Message}", LogLevel.Error);
+                this.Monitor.Log($"Failed to load '{pack.Manifest.Name}': {ex.Message}", LogLevel.Error);
             }
         }
 
-
-
         // ─── Logic Helpers ────────────────────────────────────────────────────────
 
-        /// Whether the currently selected pack forces Completionist Mode on.
         private bool ActivePackRequiresCompletionist()
         {
             if (this.Config.BundleVariant == DefaultVariantKey) return false;
-            return this.LoadedPacks.TryGetValue(this.Config.BundleVariant, out var entry)
-                   && entry.Data.RequireCompletionistMode;
+            return this.LoadedPacks.TryGetValue(this.Config.BundleVariant, out var e) && e.Data.RequireCompletionistMode;
         }
 
-        /// Whether Completionist Mode is effectively active (user toggle OR pack forces it).
         private bool IsCompletionistActive()
             => this.Config.CompletionistMode || this.ActivePackRequiresCompletionist();
 
-        /// Returns an ordered list of bundle data layers to apply, from lowest to highest priority.
-        /// An empty list means nothing should change (vanilla mode).
-        ///
-        /// Order:
-        ///   1. Completionist base — creates all extra bundle slots when Completionist is active.
-        ///   2. Custom pack data   — overrides specific bundles on top of those slots.
-        ///
-        /// Applying in layers is critical for packs with RequireCompletionistMode = true:
-        /// they use bundle-name keys like "Garden" or "Rare Crops" that only exist after
-        /// the Completionist base data has first created those slots.
+        /// <summary>
+        /// Returns ordered layers to apply, lowest to highest priority.
+        /// Layer 1 (optional): Completionist base — adds extra slots.
+        /// Layer 2 (optional): Active pack data — overrides specific bundles.
+        /// Packs that use their own extended IDs (not Completionist IDs) just use layer 2.
+        /// </summary>
         private List<Dictionary<string, string>> GetActiveBundleDataLayers()
         {
             var layers = new List<Dictionary<string, string>>();
 
-            // Layer 1: Completionist base (creates extra slots when active)
-            if (this.IsCompletionistActive() && this.CompletionistBundles is not null)
-                layers.Add(this.CompletionistBundles);
+            // Layer 1: Completionist base (creates CCCC-style extra slots when active)
+            if (this.IsCompletionistActive())
+            {
+                try
+                {
+                    var completionist = this.Helper.ModContent.Load<Dictionary<string, string>>("assets/CompletionistBundles.json");
+                    if (completionist is not null)
+                        layers.Add(completionist);
+                }
+                catch { /* already logged at startup */ }
+            }
 
-            // Layer 2: Custom pack overrides (applied on top, wins on key conflicts)
+            // Layer 2: Custom pack overrides
             if (this.Config.BundleVariant != DefaultVariantKey &&
                 this.LoadedPacks.TryGetValue(this.Config.BundleVariant, out var entry) &&
                 entry.Data.Bundles is not null &&
                 entry.Data.Bundles.Count > 0)
+            {
                 layers.Add(entry.Data.Bundles);
+            }
 
             return layers;
         }
 
-        /// Applies bundle data entries from <paramref name="source"/> onto <paramref name="target"/>.
-        /// Supports both Room/ID keys (direct set) and bundle-name keys (matched by name field).
-        /// New Room/ID entries not present in target are added (required for Completionist extra slots).
+        /// <summary>
+        /// Applies bundle data entries from source onto target.
+        /// Supports Room/ID keys (direct set) and bundle-name keys (matched by name field).
+        /// All keys are passed through as-is — no ID validation is performed.
+        /// </summary>
         private void ApplyBundleDataTo(IDictionary<string, string> target, Dictionary<string, string> source)
         {
             foreach (var (key, value) in source)
             {
-                // Sanitize sprite reference (strips formats the game can't parse)
                 string sanitized  = this.SanitizeBundleDataSprite(value);
-                // If no sprite is specified, fall back to CCCBL's bundleicon_default
                 string finalValue = this.InjectDefaultSpriteIfNeeded(sanitized);
 
                 if (key.Contains('/'))
                 {
-                    // Room/ID key — set directly (adds new slots or replaces existing ones)
                     target[key] = finalValue;
                 }
                 else
                 {
-                    // Bundle-name key — find the matching slot by the name field (field 0)
                     bool found = false;
                     foreach (string existingKey in target.Keys.ToList())
                     {
@@ -213,28 +199,27 @@ namespace CCCBL
                             break;
                         }
                     }
-
                     if (!found)
-                        this.Monitor.Log($"Bundle '{key}' not found in game data — entry skipped.", LogLevel.Trace);
+                        this.Monitor.Log($"Bundle '{key}' not found in game data — skipped.", LogLevel.Trace);
                 }
             }
         }
 
-        /// Ensures the sprite reference in field 5 of a bundle data string is in a format
-        /// the game can actually parse. Strips references using unrecognized formats
-        /// (e.g. "Mods\SomeMod\bundlesprite:0" from packs designed for other loaders)
-        /// so the game doesn't crash trying to load them as content paths.
-        /// Valid formats: empty, a plain integer, or "LooseSprites\BundleSprites:N".
+        /// <summary>
+        /// Strips sprite references the game can't parse (e.g. custom loader paths
+        /// from mods designed for different frameworks).
+        /// Valid formats: empty, plain integer, LooseSprites\..., Mods\...
+        /// </summary>
         private string SanitizeBundleDataSprite(string bundleData)
         {
-            string[] parts = bundleData.Split('/');
+            string[] parts  = bundleData.Split('/');
             if (parts.Length < 6) return bundleData;
 
-            string sprite = parts[5].Trim();
-            bool isValid = string.IsNullOrEmpty(sprite)
-                        || int.TryParse(sprite, out _)
-                        || sprite.StartsWith("LooseSprites\\", StringComparison.OrdinalIgnoreCase)
-                        || sprite.StartsWith("Mods\\", StringComparison.OrdinalIgnoreCase);
+            string sprite   = parts[5].Trim();
+            bool   isValid  = string.IsNullOrEmpty(sprite)
+                           || int.TryParse(sprite, out _)
+                           || sprite.StartsWith("LooseSprites\\", StringComparison.OrdinalIgnoreCase)
+                           || sprite.StartsWith("Mods\\",         StringComparison.OrdinalIgnoreCase);
 
             if (!isValid)
             {
@@ -249,14 +234,14 @@ namespace CCCBL
             return bundleData;
         }
 
-        /// If the bundle data string has no sprite reference in field 5, injects a reference
-        /// to CCCBL's bundleicon_default sprite so all custom bundles have a visible icon
-        /// even when the pack author hasn't specified one.
-        /// Bundles that already have a valid sprite reference are left unchanged.
+        /// <summary>
+        /// If a bundle data string has no sprite in field 5, injects a reference to
+        /// CCCBL's bundleicon_default so all custom bundles have a visible icon.
+        /// </summary>
         private string InjectDefaultSpriteIfNeeded(string bundleData)
         {
-            string[] parts       = bundleData.Split('/');
-            bool     hasSprite   = parts.Length >= 6 && !string.IsNullOrWhiteSpace(parts[5]);
+            string[] parts     = bundleData.Split('/');
+            bool     hasSprite = parts.Length >= 6 && !string.IsNullOrWhiteSpace(parts[5]);
             if (hasSprite) return bundleData;
 
             while (parts.Length < 6)
@@ -285,12 +270,8 @@ namespace CCCBL
                 titleScreenOnly: false
             );
 
-            gmcm.AddSectionTitle(
-                mod:  this.ModManifest,
-                text: () => this.Helper.Translation.Get("config.section.title")
-            );
+            gmcm.AddSectionTitle(this.ModManifest, () => this.Helper.Translation.Get("config.section.title"));
 
-            // ── Bundle pack dropdown ──────────────────────────────────────────────
             gmcm.AddTextOption(
                 mod:           this.ModManifest,
                 getValue:      () => this.Config.BundleVariant,
@@ -306,22 +287,12 @@ namespace CCCBL
                 allowedValues: this.GmcmAllowedValues,
                 formatAllowedValue: id =>
                 {
-                    if (id == DefaultVariantKey)
-                        return this.Helper.Translation.Get("config.bundle-variant.default");
-                    if (this.LoadedPacks.TryGetValue(id, out var entry))
-                        return entry.Pack.Manifest.Name;
+                    if (id == DefaultVariantKey) return this.Helper.Translation.Get("config.bundle-variant.default");
+                    if (this.LoadedPacks.TryGetValue(id, out var entry)) return entry.Pack.Manifest.Name;
                     return id;
                 }
             );
 
-            // ── Completionist Mode toggle ─────────────────────────────────────────
-            // GMCM does not support disabled/locked controls, so I kept a single
-            // static toggle. When the active pack requires Completionist Mode:
-            //   - getValue always returns true so it appears checked.
-            //   - setValue ignores changes so it can't be turned off.
-            //   - The tooltip explains why.
-            // This is evaluated at render time via lambdas, so it reflects whichever
-            // pack is currently selected without needing to re-register.
             gmcm.AddBoolOption(
                 mod:      this.ModManifest,
                 getValue: () => this.IsCompletionistActive(),
@@ -340,14 +311,12 @@ namespace CCCBL
             );
         }
 
-        /// Called whenever a config value changes — invalidates relevant cached assets.
         private void OnConfigChanged()
         {
             this.BundlesApplied = false;
             this.Helper.GameContent.InvalidateCache("Data/Bundles");
             this.Helper.GameContent.InvalidateCache("Data/RandomBundles");
             this.Helper.GameContent.InvalidateCache("LooseSprites/JunimoNote");
-            // Sprite textures are served on demand; no specific cache invalidation needed for them.
         }
 
         // ─── Asset Editing ────────────────────────────────────────────────────────
@@ -355,7 +324,6 @@ namespace CCCBL
         private void OnAssetRequested(object? sender, AssetRequestedEventArgs e)
         {
             // ── Data/Bundles ──────────────────────────────────────────────────────
-            // Applied at asset load time, which covers new game creation.
             if (e.NameWithoutLocale.IsEquivalentTo("Data/Bundles"))
             {
                 var layers = this.GetActiveBundleDataLayers();
@@ -371,35 +339,55 @@ namespace CCCBL
             }
 
             // ── LooseSprites/JunimoNote ───────────────────────────────────────────
-            // Overlay the extended note sprite when Completionist Mode is active.
-            // The active pack may supply its own note_override.png; otherwise we use
-            // our built-in note_default.png.
-            if (e.NameWithoutLocale.IsEquivalentTo("LooseSprites/JunimoNote") && this.IsCompletionistActive())
+            // Two independent patches may be applied in a single edit call:
+            //
+            // (a) CCCBL's note_default.png — always applied when any pack is active.
+            //     Extends the item display background so bundles with many items have
+            //     enough visual space. Positioned at the default CCCC area (484, 110).
+            //
+            // (b) Pack's note_override.png — additionally applied when the active pack
+            //     provides one. Handles the extra bundle slot backgrounds for packs
+            //     that use their own JunimoNote layout (e.g. BBB at 256, 292).
+            //
+            // Both patches to different areas of the same texture so they stack correctly.
+            if (e.NameWithoutLocale.IsEquivalentTo("LooseSprites/JunimoNote"))
             {
-                string? packOverride = this.GetPackNoteOverridePath();
-                bool    useDefault   = this.Helper.ModContent
-                    .GetInternalAssetName("assets/LooseSprites/note_default.png") is not null
-                    && this.HasModAsset("assets/LooseSprites/note_default.png");
+                bool    anyPackActive    = this.Config.BundleVariant != DefaultVariantKey || this.IsCompletionistActive();
+                bool    hasDefault       = this.HasModAsset("assets/LooseSprites/note_default.png");
+                string? packOverridePath = this.GetPackNoteOverridePath();
+                bool    hasPackOverride  = packOverridePath is not null;
 
-                if (packOverride is not null || useDefault)
+                if (anyPackActive && (hasDefault || hasPackOverride))
                 {
                     e.Edit(asset =>
                     {
                         try
                         {
-                            Texture2D overlay;
-                            if (packOverride is not null)
+                            var editor = asset.AsImage();
+
+                            // (a) Apply CCCBL's note_default whenever any pack is active
+                            if (hasDefault)
                             {
-                                var pack = this.LoadedPacks[this.Config.BundleVariant].Pack;
-                                overlay = pack.ModContent.Load<Texture2D>(packOverride);
+                                var defaultOverlay = this.Helper.ModContent.Load<Texture2D>("assets/LooseSprites/note_default.png");
+                                editor.ExtendImage(
+                                    minWidth:  DefaultNoteOverlayArea.X + DefaultNoteOverlayArea.Width,
+                                    minHeight: DefaultNoteOverlayArea.Y + DefaultNoteOverlayArea.Height);
+                                editor.PatchImage(defaultOverlay, targetArea: DefaultNoteOverlayArea);
                             }
-                            else
+
+                            // (b) Additionally apply the pack's own overlay if it has one
+                            if (hasPackOverride && this.LoadedPacks.TryGetValue(this.Config.BundleVariant, out var packEntry))
                             {
-                                overlay = this.Helper.ModContent.Load<Texture2D>("assets/LooseSprites/note_default.png");
+                                var     packOverlay = packEntry.Pack.ModContent.Load<Texture2D>(packOverridePath!);
+                                var     noteArea    = packEntry.Data.NoteOverlay;
+                                var     packArea    = noteArea is not null
+                                    ? new Rectangle(noteArea.X, noteArea.Y, noteArea.Width, noteArea.Height)
+                                    : DefaultNoteOverlayArea;
+                                editor.ExtendImage(
+                                    minWidth:  packArea.X + packArea.Width,
+                                    minHeight: packArea.Y + packArea.Height);
+                                editor.PatchImage(packOverlay, targetArea: packArea);
                             }
-                            // Overlay at the area CCCC uses for its extra bundle slot indicators.
-                            // Replace this Rectangle if your note_default.png covers a different area.
-                            asset.AsImage().PatchImage(overlay, targetArea: new Rectangle(484, 110, 135, 51));
                         }
                         catch (Exception ex)
                         {
@@ -410,26 +398,63 @@ namespace CCCBL
             }
 
             // ── Mods/{CCCBL}/bundleicon_default ──────────────────────────────────
-            // Serves the default bundle icon for any bundle that doesn't specify its own.
-            // Pack authors override this by including a sprite reference in their bundle
-            // data strings (Mods\{theirPackId}\{spriteFile}:frameIndex).
             if (e.NameWithoutLocale.IsEquivalentTo($"Mods/{this.ModManifest.UniqueID}/bundleicon_default") &&
                 this.HasModAsset("assets/LooseSprites/bundleicon_default.png"))
             {
                 e.LoadFromModFile<Texture2D>("assets/LooseSprites/bundleicon_default.png", AssetLoadPriority.Low);
             }
 
+            // ── LooseSprites/BundleSprites ───────────────────────────────────────
+            // If the active pack declares a BundleSpritesOverlay, patch its custom sprites
+            // into the BundleSprites sheet at the specified position. This is needed for
+            // packs that add new bundle portrait icons referenced as LooseSprites\BundleSprites:N.
+            if (e.NameWithoutLocale.IsEquivalentTo("LooseSprites/BundleSprites") &&
+                this.Config.BundleVariant != DefaultVariantKey &&
+                this.LoadedPacks.TryGetValue(this.Config.BundleVariant, out var spriteSheetPack) &&
+                spriteSheetPack.Data.BundleSpritesOverlay is not null)
+            {
+                var overlay = spriteSheetPack.Data.BundleSpritesOverlay;
+                string pngPath = $"assets/{overlay.File}.png";
+
+                if (spriteSheetPack.Pack.HasFile(pngPath))
+                {
+                    var captured    = spriteSheetPack.Pack;
+                    int targetX     = overlay.X;
+                    int targetY     = overlay.Y;
+
+                    e.Edit(asset =>
+                    {
+                        try
+                        {
+                            var patch  = captured.ModContent.Load<Texture2D>(pngPath);
+                            var editor = asset.AsImage();
+                            editor.ExtendImage(
+                                minWidth:  targetX + patch.Width,
+                                minHeight: targetY + patch.Height);
+                            editor.PatchImage(patch, targetArea: new Rectangle(targetX, targetY, patch.Width, patch.Height));
+                            this.Monitor.Log(
+                                $"Applied BundleSprites patch '{pngPath}' at ({targetX},{targetY}) " +
+                                $"from '{captured.Manifest.Name}'.",
+                                LogLevel.Debug);
+                        }
+                        catch (Exception ex)
+                        {
+                            this.Monitor.Log($"Failed to apply BundleSprites overlay: {ex.Message}", LogLevel.Warn);
+                        }
+                    }, AssetEditPriority.Default);
+                }
+            }
+
             // ── Mods/{activePackId}/{anything} ────────────────────────────────────
-            // Pack authors can reference custom textures in their bundle data sprite field:
-            //   Mods\{PackUniqueId}\{filename}:frameIndex
-            // CCCBL intercepts that request and serves assets/{filename}.png from the pack.
-            // This matches Kind's and Vegas's approach exactly. No separate Content Patcher
-            // mod is needed — everything lives in one CCCBL content pack.
+            // Serves any PNG from the active pack's assets/ folder when the game requests
+            // it at Mods/{PackUniqueId}/{filename}. Pack authors reference these in bundle
+            // data sprite fields: Mods\{PackUniqueId}\{filename}:frameIndex
             if (this.Config.BundleVariant != DefaultVariantKey &&
                 this.LoadedPacks.TryGetValue(this.Config.BundleVariant, out var spritePack))
             {
-                string modPrefix = $"Mods/{this.Config.BundleVariant}/";
-                string assetPath = e.NameWithoutLocale.ToString()!;
+                string modPrefix  = $"Mods/{this.Config.BundleVariant}/";
+                string assetPath  = e.NameWithoutLocale.ToString()!;
+
                 if (assetPath.StartsWith(modPrefix, StringComparison.OrdinalIgnoreCase))
                 {
                     string assetName = assetPath[modPrefix.Length..];
@@ -442,41 +467,14 @@ namespace CCCBL
                             () => captured.ModContent.Load<Texture2D>(pngPath),
                             AssetLoadPriority.Medium);
                         this.Monitor.Log(
-                            $"Serving '{pngPath}' from '{spritePack.Pack.Manifest.Name}' " +
-                            $"for asset request '{e.NameWithoutLocale}'.",
+                            $"Serving '{pngPath}' from '{spritePack.Pack.Manifest.Name}' for '{e.NameWithoutLocale}'.",
                             LogLevel.Debug);
                     }
                 }
             }
-
-            // ── Data/RandomBundles ────────────────────────────────────────────────
-            // Replaces the Remixed Bundles pool when Completionist Mode is active.
-            //
-            // This is currently disabled because the exact public C# type for the
-            // Data/RandomBundles asset varies by SDV/SMAPI version and isn't easily
-            // determined without inspecting the game's assembly at runtime.
-            //
-            // To enable it, find the correct type by checking which class SMAPI reports
-            // in a type-mismatch error, then uncomment and adjust the block below:
-            //
-            // if (e.NameWithoutLocale.IsEquivalentTo("Data/RandomBundles") && this.IsCompletionistActive())
-            // {
-            //     if (this.HasModAsset("assets/CompletionistRandomBundles.json"))
-            //     {
-            //         e.LoadFromModFile<List<THE_CORRECT_TYPE_HERE>>(
-            //             "assets/CompletionistRandomBundles.json",
-            //             AssetLoadPriority.Medium);
-            //     }
-            // }
-            //
-            // Without this, Completionist Mode still applies all bundles correctly.
-            // The only missing piece is the Remixed Bundles pool at new-game creation.
         }
 
-        // ─── Runtime Bundle Application (existing saves) ──────────────────────────
-        // Data/Bundles only applies when a new game or save is loaded from disk.
-        // For existing saves already in memory we also patch BundleData directly,
-        // then revert it before saving so the save file stays vanilla-compatible.
+        // ─── Runtime BundleData (existing saves) ──────────────────────────────────
 
         private void OnDayStarted(object? sender, DayStartedEventArgs e)
         {
@@ -486,23 +484,15 @@ namespace CCCBL
             if (layers.Count == 0) return;
 
             var current = Game1.netWorldState.Value.BundleData;
-
-            // Snapshot the full current BundleData for reversion
             this.OriginalBundleData = new Dictionary<string, string>(current);
 
-            // Apply each layer in order on top of a copy
             var modified = new Dictionary<string, string>(current);
             foreach (var layer in layers)
                 this.ApplyBundleDataTo(modified, layer);
 
             Game1.netWorldState.Value.SetBundleData(modified);
             this.BundlesApplied = true;
-
-            this.Monitor.Log(
-                $"Applied '{this.Config.BundleVariant}' bundle data to in-memory BundleData.",
-                LogLevel.Debug);
-
-
+            this.Monitor.Log($"Applied '{this.Config.BundleVariant}' bundle data to in-memory BundleData.", LogLevel.Debug);
         }
 
         private void OnDayEnding(object? sender, DayEndingEventArgs e) => this.RevertBundleData();
@@ -516,24 +506,16 @@ namespace CCCBL
             this.Monitor.Log("Reverted BundleData to original for saving.", LogLevel.Debug);
         }
 
-        // ─── Sprite Utilities ─────────────────────────────────────────────────────
+        // ─── Utilities ────────────────────────────────────────────────────────────
 
-        /// Returns the relative path to note_override.png inside the active content pack,
-        /// or null if the active pack doesn't provide one.
         private string? GetPackNoteOverridePath()
         {
             if (this.Config.BundleVariant == DefaultVariantKey) return null;
             if (!this.LoadedPacks.TryGetValue(this.Config.BundleVariant, out var entry)) return null;
-
-            const string path = "assets/LooseSprites/note_override.png";
+            const string path = "assets/note_override.png";
             return entry.Pack.HasFile(path) ? path : null;
         }
 
-
-
-        /// Returns true if a file at the given path exists inside this mod's own folder.
-        /// Uses HasFile-equivalent logic via IContentPack not available for the host mod,
-        /// so we fall back to a direct disk check (safe — we are only checking our own directory).
         private bool HasModAsset(string relativePath)
         {
             string fullPath = Path.Combine(
